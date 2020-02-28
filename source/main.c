@@ -42,8 +42,15 @@ typedef struct {
     string_tree_node_data_t nodes[127];
 } string_tree_node_t;
 
-static uint32_t s_hash_impl(const char *string, uint32_t length) {
-    return ((length ? s_hash_impl(string, length - 1) : 2166136261u) ^ string[length]) * 16777619u;
+static uint32_t s_hash_impl(char *buffer, size_t buflength) {
+    uint32_t s1 = 1;
+    uint32_t s2 = 0;
+
+    for (size_t n = 0; n < buflength; n++) {
+        s1 = (s1 + buffer[n]) % 65521;
+        s2 = (s2 + s1) % 65521;
+    }
+    return (s2 << 16) | s1;
 }
 
 static uint32_t s_hash(const char *string, uint32_t length) {
@@ -182,6 +189,7 @@ static void *s_register_string(
     uint32_t length,
     uint32_t data) {
     string_tree_node_t *current = root;
+    uint32_t hash = s_hash(string, length);
     for (uint32_t i = 0; i < length; ++i) {
         string_tree_node_data_t *string_data = &current->nodes[string[i]];
 
@@ -190,8 +198,6 @@ static void *s_register_string(
         }
         else {
             if (string_data->initialised) {
-                uint32_t hash = s_hash(string, length);
-                    
                 if (string_data->hash == hash) {
                     printf("Symbol already exists\n");
                     exit(1);
@@ -210,7 +216,7 @@ static void *s_register_string(
             }
 
             string_data->initialised = 1;
-            string_data->hash = s_hash(string, length);
+            string_data->hash = hash;
             string_data->data = data;
             string_data->string = string;
             string_data->string_length = length;
@@ -221,7 +227,7 @@ static void *s_register_string(
 
     string_tree_node_data_t *string_data = &current->nodes[string[length - 1]];
 
-    string_data->hash = s_hash(string, length);
+    string_data->hash = hash;
     string_data->initialised = 1;
     string_data->data = data;
     string_data->string = string;
@@ -233,8 +239,9 @@ static string_tree_node_data_t *s_traverse_tree(
     const char *string,
     uint32_t length) {
     string_tree_node_t *current = root;
+    uint32_t hash = s_hash(string, length);
     for (uint32_t i = 0; i < length; ++i) {
-        if (current->nodes[string[i]].hash == s_hash(string, length)) {
+        if (current->nodes[string[i]].hash == hash) {
             return &current->nodes[string[i]];
         }
         else if (current->nodes[string[i]].next) {
