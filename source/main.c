@@ -63,122 +63,74 @@ static string_tree_node_t *s_tree_node_create() {
     return new_node;
 }
 
+static void *s_string_data_init(
+    uint32_t data, 
+    const char *string, 
+    uint32_t string_length, 
+    uint32_t hash, 
+    string_tree_node_data_t *node_data) {
+    node_data->initialised = 1;
+    node_data->data = data;
+    node_data->hash = hash;
+    node_data->string = string;
+    node_data->string_length = string_length;
+}
+
+static void *s_string_data_deinit(
+    string_tree_node_data_t *node_data) {
+    node_data->initialised = 0;
+    node_data->data = 0;
+    node_data->hash = 0;
+    node_data->string = NULL;
+    node_data->string_length = 0;
+}
+
 static void *s_handle_conflict(
     uint32_t current_char,
     const char *string, 
     uint32_t length,
     uint32_t hash,
     uint32_t data,
+    string_tree_node_t *current,
     string_tree_node_data_t *string_data) {
-    const char *other_string = string_data->string;
-    uint32_t other_length = string_data->string_length;
-    uint32_t other_hash = string_data->hash;
-    uint32_t other_data = string_data->data;
+    string_tree_node_data_t smaller, bigger;
 
-    if (current_char == length - 1) {
-        // This string belongs here
-        // Need to swap
-        string_data->string = string;
-        string_data->string_length = length;
-        string_data->data = data;
-        string_data->hash = hash;
-
-        string_data->next = s_tree_node_create();
-        
-        string_tree_node_t *next_node = (string_tree_node_t *)(string_data->next);
-        string_tree_node_data_t *next_char = &next_node->nodes[other_string[current_char]];
-        next_char->initialised = 1;
-        next_char->data = other_data;
-        next_char->string = other_string;
-        next_char->string_length = other_length;
-        next_char->hash = other_hash;
-
-        return;
-    }
-    else if (current_char == other_length - 1) {
-        // Other string belongs here - don't change
-        string_data->next = s_tree_node_create();
-
-        string_tree_node_t *next_node = (string_tree_node_t *)(string_data->next);
-        string_tree_node_data_t *next_char = &next_node->nodes[string[current_char]];
-        next_char->initialised = 1;
-        next_char->data = data;
-        next_char->string = string;
-        next_char->string_length = length;
-        next_char->hash = hash;
-
-        return;
+    if (string_data->string_length < length) {
+        s_string_data_init(string_data->data, string_data->string, string_data->string_length, string_data->hash, &smaller);
+        s_string_data_init(data, string, length, hash, &bigger);
     }
     else {
-        // Both need to be moved
-        string_data->next = s_tree_node_create();
-        string_data->initialised = 0;
-        string_data->hash = 0;
-        string_data->string = NULL;
-        string_data->string_length = 0;
-        string_data->data = 0;
+        s_string_data_init(data, string, length, hash, &smaller);
+        s_string_data_init(string_data->data, string_data->string, string_data->string_length, string_data->hash, &bigger);
+    }
 
-        const char *smaller_string, *bigger_string;
-        uint32_t smaller_length, bigger_length;
-        uint32_t smaller_hash, bigger_hash;
-        uint32_t smaller_data, bigger_data;
+    s_string_data_deinit(string_data);
+    
+    string_tree_node_t *current_node = current;
+    for (uint32_t i = current_char; i < smaller.string_length; i++) {
+        if (smaller.string[i] == bigger.string[i]) {
+            // Need to do process again
+            if (i == smaller.string_length - 1) {
+                // End
+                // This is the smaller string's final node
+                s_string_data_init(smaller.data, smaller.string, smaller.string_length, smaller.hash, &current_node->nodes[smaller.string[i]]);
 
-        if (other_length < length) {
-            smaller_string = other_string, bigger_string = string;
-            smaller_length = other_length, bigger_length = length;
-            smaller_hash = other_hash, bigger_hash = hash;
-            smaller_data = other_data, bigger_data = data;
-        }
-        else {
-            smaller_string = string, bigger_string = other_string;
-            smaller_length = length, bigger_length = other_length;
-            smaller_hash = hash, bigger_hash = other_hash;
-            smaller_data = data, bigger_data = other_data;
-        }
-
-        string_tree_node_t *current_node = string_data->next;
-        for (uint32_t i = current_char + 1; i < smaller_length; i++) {
-            if (other_string[i] == string[i]) {
-                // Need to do process again
-                if (i == smaller_length - 1) {
-                    // End
-                    // This is the smaller string's final node
-                    current_node->nodes[smaller_string[i]].initialised = 1;
-                    current_node->nodes[smaller_string[i]].string = smaller_string;
-                    current_node->nodes[smaller_string[i]].data = smaller_data;
-                    current_node->nodes[smaller_string[i]].string_length = smaller_length;
-                    current_node->nodes[smaller_string[i]].hash = smaller_hash;
-
-                    current_node->nodes[bigger_string[i]].next = s_tree_node_create();
-                    current_node = current_node->nodes[bigger_string[i]].next;
-                    current_node->nodes[bigger_string[i + 1]].initialised = 1;
-                    current_node->nodes[bigger_string[i + 1]].string = bigger_string;
-                    current_node->nodes[bigger_string[i + 1]].data = bigger_data;
-                    current_node->nodes[bigger_string[i + 1]].string_length = bigger_length;
-                    current_node->nodes[bigger_string[i + 1]].hash = bigger_hash;
-
-                    break;
-                }
-
-                current_node->nodes[bigger_string[i]].next = s_tree_node_create();
-                current_node = current_node->nodes[other_string[i]].next;
-            }
-            else {
-                // No more conflicts : can dump string in their respective character slots
-                current_node->nodes[smaller_string[i]].initialised = 1;
-                current_node->nodes[smaller_string[i]].data = smaller_data;
-                current_node->nodes[smaller_string[i]].hash = smaller_hash;
-                current_node->nodes[smaller_string[i]].string = smaller_string;
-                current_node->nodes[smaller_string[i]].string_length = smaller_length;
-
-                current_node->nodes[bigger_string[i]].initialised = 1;
-                current_node->nodes[bigger_string[i]].data = bigger_data;
-                current_node->nodes[bigger_string[i]].hash = bigger_hash;
-                current_node->nodes[bigger_string[i]].string = bigger_string;
-                current_node->nodes[bigger_string[i]].string_length = bigger_length;
-
+                current_node->nodes[bigger.string[i]].next = s_tree_node_create();
+                current_node = current_node->nodes[bigger.string[i]].next;
+                s_string_data_init(bigger.data, bigger.string, bigger.string_length, bigger.hash, &current_node->nodes[bigger.string[i + 1]]);
+                
                 break;
             }
+            
+            current_node->nodes[bigger.string[i]].next = s_tree_node_create();
+            current_node = current_node->nodes[bigger.string[i]].next;
+        }
+        else {
+            // No more conflicts : can dump string in their respective character slots
+            s_string_data_init(smaller.data, smaller.string, smaller.string_length, smaller.hash, &current_node->nodes[smaller.string[i]]);
+            s_string_data_init(bigger.data, bigger.string, bigger.string_length, bigger.hash, &current_node->nodes[bigger.string[i]]);
+
+            break;
         }
     }
 }
@@ -190,48 +142,36 @@ static void *s_register_string(
     uint32_t data) {
     string_tree_node_t *current = root;
     uint32_t hash = s_hash(string, length);
-    for (uint32_t i = 0; i < length; ++i) {
-        string_tree_node_data_t *string_data = &current->nodes[string[i]];
+    string_tree_node_data_t *string_data = &current->nodes[string[0]];
 
-        if (string_data->next) {
-            current = string_data->next;
-        }
-        else {
-            if (string_data->initialised) {
-                if (string_data->hash == hash) {
-                    printf("Symbol already exists\n");
-                    exit(1);
-                }
-
-                // Problem: need to move the current string to another node
-                s_handle_conflict(
-                    i,
-                    string,
-                    length,
-                    hash,
-                    data,
-                    string_data);
-
-                return;
-            }
-
-            string_data->initialised = 1;
-            string_data->hash = hash;
-            string_data->data = data;
-            string_data->string = string;
-            string_data->string_length = length;
-
-            return;
-        }
+    uint32_t i = 0;
+    for (; i < length && current->nodes[string[i]].next; ++i) {
+        string_data = &current->nodes[string[i]];
+        current = string_data->next;
     }
 
-    string_tree_node_data_t *string_data = &current->nodes[string[length - 1]];
+    // The symbol already exists
+    if (string_data->hash == hash) {
+        printf("Symbol already exists\n");
+        exit(1);
+    }
 
-    string_data->hash = hash;
-    string_data->initialised = 1;
-    string_data->data = data;
-    string_data->string = string;
-    string_data->string_length = length;
+    // If string has already been initialised
+    if (string_data->initialised) {
+        // Problem: need to move the current string to another node
+        s_handle_conflict(
+            i,
+            string,
+            length,
+            hash,
+            data,
+            current,
+            string_data);
+
+        return;
+    }
+
+    s_string_data_init(data, string, length, hash, string_data);
 }
 
 static string_tree_node_data_t *s_traverse_tree(
@@ -240,26 +180,17 @@ static string_tree_node_data_t *s_traverse_tree(
     uint32_t length) {
     string_tree_node_t *current = root;
     uint32_t hash = s_hash(string, length);
-    for (uint32_t i = 0; i < length; ++i) {
+
+    for (uint32_t i = 0; i < length && current; ++i) {
         if (current->nodes[string[i]].hash == hash) {
             return &current->nodes[string[i]];
         }
-        else if (current->nodes[string[i]].next) {
-            current = current->nodes[string[i]].next;
-        }
-        else {
-            printf("Unregistered symbol\n");
-            return NULL;
-        }
+        
+        current = current->nodes[string[i]].next;
     }
 
-    if (current->nodes[string[length - 1]].initialised) {
-        return &current->nodes[string[length - 1]];
-    }
-    else {
-        printf("Unregistered symbol\n");
-        return NULL;
-    }
+    printf("Symbol does not exist\n");
+    return NULL;
 }
 
 typedef struct {
