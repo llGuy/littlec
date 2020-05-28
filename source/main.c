@@ -1,11 +1,15 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
+struct token_t *tokens_buffer;
+
 typedef enum {
+    TT_NONE,
     TT_KEYWORD,
     TT_SYMBOL,
     TT_NUMBER,
@@ -13,7 +17,10 @@ typedef enum {
     TT_CLOSE_PAREN,
     TT_OPEN_CURLY,
     TT_CLOSE_CURLY,
-    TT_SEMI_COLON
+    TT_SEMI_COLON,
+    TT_COMMENT,
+    TT_NEW_LINE,
+    TT_WHITESPACE
 } token_type_t;
 
 typedef enum {
@@ -42,7 +49,9 @@ typedef struct {
     string_tree_node_data_t nodes[127];
 } string_tree_node_t;
 
-static uint32_t s_hash_impl(char *buffer, size_t buflength) {
+static uint32_t s_hash_impl(
+    char *buffer,
+    size_t buflength) {
     uint32_t s1 = 1;
     uint32_t s2 = 0;
 
@@ -53,19 +62,21 @@ static uint32_t s_hash_impl(char *buffer, size_t buflength) {
     return (s2 << 16) | s1;
 }
 
-static uint32_t s_hash(const char *string, uint32_t length) {
+static uint32_t s_hash(
+    char *string,
+    uint32_t length) {
     return s_hash_impl(string, length - 1);
 }
 
 static string_tree_node_t *s_tree_node_create() {
     string_tree_node_t *new_node = (string_tree_node_t *)malloc(sizeof(string_tree_node_t));
-    memset(new_node, 0, sizeof(string_tree_node_t));
+    memset((void *)new_node, 0, sizeof(string_tree_node_t));
     return new_node;
 }
 
-static void *s_string_data_init(
+static void s_string_data_init(
     uint32_t data, 
-    const char *string, 
+    char *string,
     uint32_t string_length, 
     uint32_t hash, 
     string_tree_node_data_t *node_data) {
@@ -76,7 +87,7 @@ static void *s_string_data_init(
     node_data->string_length = string_length;
 }
 
-static void *s_string_data_deinit(
+static void s_string_data_deinit(
     string_tree_node_data_t *node_data) {
     node_data->initialised = 0;
     node_data->data = 0;
@@ -97,10 +108,10 @@ static void *s_handle_conflict(
 
     if (string_data->string_length < length) {
         s_string_data_init(string_data->data, string_data->string, string_data->string_length, string_data->hash, &smaller);
-        s_string_data_init(data, string, length, hash, &bigger);
+        s_string_data_init(data, (char *)string, length, hash, &bigger);
     }
     else {
-        s_string_data_init(data, string, length, hash, &smaller);
+        s_string_data_init(data, (char *)string, length, hash, &smaller);
         s_string_data_init(string_data->data, string_data->string, string_data->string_length, string_data->hash, &bigger);
     }
 
@@ -135,13 +146,13 @@ static void *s_handle_conflict(
     }
 }
 
-static void *s_register_string(
+static void s_register_string(
     string_tree_node_t *root, 
     const char *string, 
     uint32_t length,
     uint32_t data) {
     string_tree_node_t *current = root;
-    uint32_t hash = s_hash(string, length);
+    uint32_t hash = s_hash((char *)string, length);
     string_tree_node_data_t *string_data = &current->nodes[string[0]];
 
     uint32_t i = 0;
@@ -179,7 +190,7 @@ static string_tree_node_data_t *s_traverse_tree(
     const char *string,
     uint32_t length) {
     string_tree_node_t *current = root;
-    uint32_t hash = s_hash(string, length);
+    uint32_t hash = s_hash((char *)string, length);
 
     for (uint32_t i = 0; i < length && current; ++i) {
         if (current->nodes[string[i]].hash == hash) {
@@ -199,9 +210,9 @@ typedef struct {
     token_type_t type;
 } token_t;
 
-static token_type_t s_determine_token_type(
-    char *pointer) {
-    switch(pointer[0]) {
+static token_type_t s_determine_character_token_type(
+    char c) {
+    switch(c) {
         
     case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9': return TT_NUMBER;
     case '(': return TT_OPEN_PAREN;
@@ -209,14 +220,81 @@ static token_type_t s_determine_token_type(
     case '{': return TT_OPEN_CURLY;
     case '}': return TT_CLOSE_CURLY;
     case ';': return TT_SEMI_COLON;
-    default: break;
+    default: return TT_NONE;
 
+    }
+}
+
+static token_type_t s_determine_token_type(
+    char *pointer) {
+    token_type_t first_character = s_determine_character_token_type(pointer[0]);
+    if (first_character != TT_NONE) {
+        return first_character;
     }
 
     /* Isn't number, bracket, curly or semi colon */
     for (uint32_t k = 0; k < sizeof(KEYWORDS) / sizeof(const char *); ++k) {
-        if (KEYWORDS[k][0] == pointer[0]) {
-            
+        
+    }
+}
+
+static token_t s_tokenise(
+    char comment_character,
+    uint32_t *token_count,
+    char *pointer_start) {
+    token_t *tokens = tokens_buffer;
+    *token_count = 0;
+
+    char *current_whitespace_start = NULL;
+    
+    char *word_start = NULL;
+    char *number_start = NULL;
+
+    for (char *c = pointer_start; *c != 0; ++c) {
+        token_type_t type = s_determine_character_token_type(*c);
+
+        switch(type) {
+        case TT_NEW_LINE: {
+            token_t token = {};
+            token.at = c;
+            token.length = 1;
+            token.type = TT_NEW_LINE;
+            tokens[*token_count++] = token;
+        } break;
+
+        case TT_COMMENT: {
+            token_t token = {};
+            token.at = c;
+            token.length = 1;
+            token.type = TT_COMMENT;
+            tokens[*token_count++] = token;
+        } break;
+
+        case TT_WHITESPACE: {
+            token_t token = {};
+            token.at = c;
+            token.length = 1;
+            token.type = TT_WHITESPACE;
+            tokens[*token_count++] = token;
+        } break;
+
+        case TT_NONE: {
+            if (!word_start) {
+                word_start = c;
+            }
+        } break;
+
+        case TT_NUMBER: {
+            if (!word_start) {
+                if (!number_start) {
+                    number_start = c;
+                }
+            }
+        } break;
+
+        default: {
+
+        } break;
         }
     }
 }
@@ -244,6 +322,7 @@ int32_t main(
     int32_t argc,
     char *argv[]) {
 //    lc_do_file("../test/t0.c");
+    tokens_buffer = (token_t *)malloc(sizeof(token_t) * 1000);
 
     string_tree_node_t *root = s_tree_node_create();
 
